@@ -7,14 +7,17 @@
 #define QUANTUM 4
 
 typedef struct {
-    int id;             // Identificador do processo
-    int tInicio;        // Tempo de chegada
-    int *tCpu;          // Vetor de tempos de CPU
-    int *disp;          // Vetor de dispositivos (intercalado com tCpu)
-    int numCycles;      // Número de ciclos CPU/I/O
-    int estado;         // Estado do processo (0: new/ready, 1: waiting, 2: running, 3: finished)
-    int currentCycle;   // Ciclo atual do processo
-    int remainingTime;  // Tempo restante para finalizar o ciclo atual
+    int id;
+    int tInicio;
+    int *tCpu;
+    int *disp;
+    int numCycles;
+    int estado;          // 0: new/ready, 1: waiting, 2: running, 3: finished
+    int currentCycle;
+    int remainingTime;
+    int waitingTime;     // Tempo na fila ready
+    int deviceTime;      // Tempo nos dispositivos
+    int throughput;      // Tempo total desde a submissão até a conclusão
 } PCB;
 
 typedef struct Node {
@@ -27,79 +30,90 @@ typedef struct {
     Node *rear;
 } Queue;
 
-int nProc, nDisp;        // Número de processos e dispositivos
-int tDisp[MAX_DEVICES];  // Tempos de atendimento de dispositivos
-PCB processes[MAX_PROCESSES]; // Lista de processos
+int nProc, nDisp;
+int tDisp[MAX_DEVICES];
+PCB processes[MAX_PROCESSES];
+
+// Funções auxiliares
 
 void readInput(const char *filename);
-
-// Funções de fila
+void recordTrace(char **trace, int *traceIndex, int currentTime);
 void initQueue(Queue *q);
 void enqueue(Queue *q, PCB *process);
 PCB *dequeue(Queue *q);
 int isQueueEmpty(Queue *q);
-
 void processIO(Queue *waitingQueue, Queue *readyQueue, int currentTime);
+void saveOutput(const char *filename, int totalIdleTime, int currentTime, char **trace, int traceLength);
 
 int main() {
-    const char *filename = "../input.txt"; // Caminho fixo para o arquivo de entrada
+    const char *filename = "../input.txt";
+    const char *outputFilename = "../output.txt";
 
-    // Inicializar filas
     Queue readyQueue, waitingQueue;
     initQueue(&readyQueue);
     initQueue(&waitingQueue);
 
     readInput(filename);
 
-    // Adicionar todos os processos à fila de prontos
+    char **trace = (char **)malloc(10000 * sizeof(char *));
+    int traceIndex = 0;
+
+    int totalIdleTime = 0;
+    int currentTime = 0;
+
     for (int i = 0; i < nProc; i++) {
-        processes[i].estado = 0; // Estado inicial: new/ready
+        processes[i].estado = 0;
+        processes[i].waitingTime = 0;
+        processes[i].deviceTime = 0;
         enqueue(&readyQueue, &processes[i]);
     }
 
-    // Simulação simples do escalonador
-    printf("\nSimulacao do escalonador:\n");
-    int currentTime = 0;
-
     while (!isQueueEmpty(&readyQueue) || !isQueueEmpty(&waitingQueue)) {
-        // Processar I/O antes de executar ciclos de CPU
+        recordTrace(trace, &traceIndex, currentTime); // Registrar estado
+
         processIO(&waitingQueue, &readyQueue, currentTime);
 
-        // Selecionar o próximo processo para execução
         PCB *process = dequeue(&readyQueue);
         if (process) {
-            printf("Tempo %d: Executando Processo %d (Ciclo Atual: %d):\n", currentTime, process->id, process->currentCycle);
             process->estado = 2; // Executando
             int remainingTime = process->remainingTime;
 
             if (remainingTime > QUANTUM) {
-                printf("  Quantum utilizado: %d\n", QUANTUM);
                 process->remainingTime -= QUANTUM;
                 currentTime += QUANTUM;
                 enqueue(&readyQueue, process);
             } else {
-                printf("  Ciclo concluido em %d unidades de tempo\n", remainingTime);
                 currentTime += remainingTime;
                 process->currentCycle++;
                 if (process->currentCycle < process->numCycles) {
-                    // Enviar para a fila de espera (I/O)
-                    printf("  Processo %d movido para a fila de espera.\n", process->id);
                     process->estado = 1;
                     enqueue(&waitingQueue, process);
                 } else {
-                    printf("  Processo %d finalizado.\n", process->id);
                     process->estado = 3; // Finalizado
+                    process->throughput = currentTime - process->tInicio;
                 }
             }
         } else {
-            // Avançar o tempo enquanto aguarda processos de I/O
+            totalIdleTime++;
             currentTime++;
+        }
+
+        Node *node = readyQueue.front;
+        while (node) {
+            node->process->waitingTime++;
+            node = node->next;
         }
     }
 
+    saveOutput(outputFilename, totalIdleTime, currentTime, trace, traceIndex);
+
+    for (int i = 0; i < traceIndex; i++) {
+        free(trace[i]);
+    }
+    free(trace);
+
     return 0;
 }
-
 // Função para processar I/O
 void processIO(Queue *waitingQueue, Queue *readyQueue, int currentTime) {
     Node *current = waitingQueue->front;
@@ -107,13 +121,19 @@ void processIO(Queue *waitingQueue, Queue *readyQueue, int currentTime) {
 
     while (current) {
         PCB *process = current->process;
-        int deviceTime = process->disp[process->currentCycle - 1]; // Tempo de dispositivo do ciclo anterior
-        if (deviceTime <= currentTime) {
-            printf("  Processo %d completou I/O e foi movido para a fila de prontos.\n", process->id);
+        int deviceIndex = process->disp[process->currentCycle - 1];
+        if (deviceIndex >= 0 && deviceIndex < nDisp) {
+            process->deviceTime += tDisp[deviceIndex];
+        }
+
+        if (deviceIndex > 0) {
+            deviceIndex--;
+        }
+
+        if (deviceIndex == 0) {
             process->estado = 0; // Pronto
             enqueue(readyQueue, process);
 
-            // Remover da fila de espera
             if (prev) {
                 prev->next = current->next;
             } else {
@@ -128,10 +148,37 @@ void processIO(Queue *waitingQueue, Queue *readyQueue, int currentTime) {
         }
     }
 
-    // Atualizar o final da fila se necessário
     if (!waitingQueue->front) {
         waitingQueue->rear = NULL;
     }
+}
+
+// Função para salvar a saída em arquivo
+void saveOutput(const char *filename, int totalIdleTime, int currentTime, char **trace, int traceLength) {
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        perror("Erro ao criar o arquivo de saída");
+        exit(EXIT_FAILURE);
+    }
+
+    fprintf(file, "Trace:\n");
+    for (int t = 0; t < traceLength; t++) {
+        fprintf(file, "%s\n", trace[t]);
+    }
+
+    fprintf(file, "\nMetrics:\n");
+    for (int i = 0; i < nProc; i++) {
+        fprintf(file, "P%02d device time", processes[i].id);
+        for (int d = 0; d < nDisp; d++) {
+            int deviceTime = (d < processes[i].numCycles) ? processes[i].disp[d] : 0;
+            fprintf(file, " d%d: %d,", d + 1, deviceTime);
+        }
+        fprintf(file, " waiting time: %d,", processes[i].waitingTime);
+        fprintf(file, " throughput: %d\n", processes[i].throughput);
+    }
+    fprintf(file, "CPU idle time: %d\n", totalIdleTime);
+
+    fclose(file);
 }
 
 // Função para ler o arquivo de entrada
@@ -167,6 +214,11 @@ void readInput(const char *filename) {
         processes[i].disp = (int *)malloc(MAX_DEVICES * sizeof(int));
         processes[i].numCycles = 0;
         processes[i].currentCycle = 0;
+
+        // Inicializar o vetor disp com -1
+        for (int j = 0; j < MAX_DEVICES; j++) {
+            processes[i].disp[j] = -1;
+        }
 
         // Ler tempo de chegada do processo
         if (fscanf(file, "%d", &processes[i].tInicio) != 1) {
@@ -211,7 +263,41 @@ void readInput(const char *filename) {
 
     fclose(file);
 }
+void recordTrace(char **trace, int *traceIndex, int currentTime) {
+    char buffer[1024];
+    sprintf(buffer, "<%02d> | ", currentTime);
 
+    for (int i = 0; i < nProc; i++) {
+        char state[256];
+        switch (processes[i].estado) {
+            case 0:
+                sprintf(state, "P%02d state: new/ready", processes[i].id);
+                break;
+            case 1:
+                if (processes[i].currentCycle < processes[i].numCycles && processes[i].disp[processes[i].currentCycle] >= 0) {
+                    sprintf(state, "P%02d state: blocked d%d", processes[i].id, processes[i].disp[processes[i].currentCycle]);
+                } else {
+                    sprintf(state, "P%02d state: blocked", processes[i].id);
+                }
+                break;
+            case 2:
+                sprintf(state, "P%02d state: running", processes[i].id);
+                break;
+            case 3:
+                sprintf(state, "P%02d state: terminated", processes[i].id);
+                break;
+            default:
+                sprintf(state, "P%02d state: --", processes[i].id);
+                break;
+        }
+        strcat(buffer, state);
+        strcat(buffer, " | ");
+    }
+
+    trace[*traceIndex] = (char *)malloc(strlen(buffer) + 1);
+    strcpy(trace[*traceIndex], buffer);
+    (*traceIndex)++;
+}
 // Funções de fila
 void initQueue(Queue *q) {
     q->front = q->rear = NULL;

@@ -1,0 +1,17 @@
+Trace:
+<00> | P01 state: new/ready | P02 state: new/ready | P03 state: new/ready | 
+<01> | P01 state: blocked d3 | P02 state: new/ready | P03 state: new/ready | 
+<05> | P01 state: new/ready | P02 state: blocked d3 | P03 state: new/ready | 
+<07> | P01 state: new/ready | P02 state: blocked d3 | P03 state: blocked d-1 | 
+<08> | P01 state: blocked d-1 | P02 state: new/ready | P03 state: blocked d-1 | 
+<12> | P01 state: blocked d-1 | P02 state: blocked d2 | P03 state: new/ready | 
+<14> | P01 state: blocked d-1 | P02 state: blocked d2 | P03 state: terminated | 
+<15> | P01 state: terminated | P02 state: blocked d2 | P03 state: terminated | 
+<19> | P01 state: terminated | P02 state: blocked d-1 | P03 state: terminated | 
+<20> | P01 state: terminated | P02 state: blocked d-1 | P03 state: terminated | 
+
+Metrics:
+P01 device time d1: 0, d2: 0, d3: -1, waiting time: 2, throughput: 15
+P02 device time d1: 0, d2: 0, d3: 0, waiting time: 2, throughput: 22
+P03 device time d1: 0, d2: -1, d3: 0, waiting time: 3, throughput: 11
+CPU idle time: 1
